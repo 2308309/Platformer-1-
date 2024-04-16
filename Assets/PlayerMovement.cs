@@ -2,35 +2,117 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-public class PlayerMovement : MonoBehaviour
+public class PlayerMovement : Movement
 {
     public float JumpHeldForce = 5f;
     public float JumpHeldMaxDuration = 0.5f;
 
     private float _JumpHeldCurrentDuration = 0f;
-    //private float _inputJumped = false;
+    private bool _inputJumped = false;
 
-    // Start is called before the first frame update
+    private bool _inputDown = false;
+    private bool _triedHoldJump = false;
+    private bool _canFallThrough = false;
+    private RaycastHit2D fallthroughPlatformHit;
+    private Collider2D targetPlatform;
+
     protected override void HandleInput()
     {
-        _inputDirection = new Vector2(Input.GetAxis("Horizontal"), 0f);
+        InputDirection = new Vector2(Input.GetAxis("Horizontal"), Input.GetAxis("Vertical"));
 
-        if (Input.GetButtonDown("Jump"))
-            DoJump();
+        if (InputDirection.y < 0)
+            _inputDown = true;
+        else
+            _inputDown = false;
+
+        if (Input.GetButton("Jump"))
+        {
+            if (_inputDown && _canFallThrough)
+            {
+                FallthroughPlatform();
+            }
+            else
+            {
+                if (!_inputJumped)
+                    DoJump();
+
+                if (_JumpHeldCurrentDuration < JumpHeldMaxDuration && !_canJump && !_inputJumped)
+                {
+                    _rigidbody2D.velocity += new Vector2(0, JumpHeldForce * Time.deltaTime);
+                    _JumpHeldCurrentDuration += Time.deltaTime;
+                }
+
+                if (_JumpHeldCurrentDuration >= JumpHeldMaxDuration)
+                    _inputJumped = true;
+
+            }
+        }
+
+        if (Input.GetButtonUp("Jump"))
+        {
+            _JumpHeldCurrentDuration = JumpHeldMaxDuration;
+            _inputJumped = false;
+        }
+        //DoJump();
     }
 
     protected virtual void CheckGround()
     {
+        base.CheckGround();
 
-    }
-
-    protected virtual void HandleMovement()
-    {
-        Vector3 targetVelocity = Vector3.zero;
-
-        if (_isGrounded && !_isJumping)
+        if (IsGrounded)
         {
-            targetVelocity = new Vector2(x: _inputDirection.x * (Acceleration), y: 0f);
+            _JumpHeldCurrentDuration = 0f;
+            _triedHoldJump = false;
         }
     }
+
+    protected override void FixedUpdate()
+    {
+        base.FixedUpdate();
+
+        CheckFallthroughPlatform();
+    }
+    private void FallthroughPlatform()
+    {
+        if (_canFallThrough)
+            targetPlatform = fallthroughPlatformHit.collider;
+
+        Physics2D.IgnoreCollision(_collider2D, targetPlatform, true);
+        Invoke("ReactivateFallthroughCollission", 0.2f);
+    }
+
+    protected void ReactiveFallThroughCollision()
+    {
+        Physics2D.IgnoreCollision(_collider2D, targetPlatform, false);
+    }
+
+    private void CheckFallthroughPlatform()
+    {
+        fallthroughPlatformHit = Physics2D.Raycast(GroundCheck.position, Vector2.down, 1f, GroundLayerMask);
+
+        if (fallthroughPlatformHit == null)
+        {
+            _canFallThrough = false;
+            return;
+        }
+
+        if (fallthroughPlatformHit.collider == null)
+        {
+            _canFallThrough = false;
+            return;
+        }
+
+        _canFallThrough = fallthroughPlatformHit.collider.CompareTag("Fallthrough");
+    }
+
+    //protected virtual void HandleMovement()
+    //{
+    //    Vector3 targetVelocity = Vector3.zero;
+
+    //    if (_isGrounded && !_isJumping)
+    //    {
+    //        targetVelocity = new Vector2(x: _inputDirection.x * (Acceleration), y: 0f);
+    //    }
+    //}
 }

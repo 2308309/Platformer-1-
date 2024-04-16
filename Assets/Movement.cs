@@ -1,14 +1,15 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using Unity.Burst.CompilerServices;
 using UnityEditor.Build;
 using UnityEngine;
+using static UnityEngine.GridBrushBase;
 
 public class Movement : MonoBehaviour
 {
     public float Acceleration = 10f;
     public float JumpForce = 50f;
-    //ground check
     public Transform GroundCheck;
     public float GroundCheckRadius = 1f;
     public float MaxSlopeAngle = 45f;
@@ -16,15 +17,15 @@ public class Movement : MonoBehaviour
     public Cooldown CoyoteTime;
     public Cooldown BufferJump;
 
-    public bool _isGrounded = false;
-    public bool _isJumping = false;
-
     public LayerMask GroundLayerMask;
 
-    protected Vector2 _inputDirection;
+    public PhysicsMaterial2D Default;
+    public PhysicsMaterial2D FullFriction;
 
-    protected Rigidbody2D _rigidbody2D;
-    protected Collider2D _collider2D;
+    private float m_MovementSmoothing = .05f;
+    private Vector3 m_Velocity = Vector3.zero;
+
+
 
     public bool IsJumping
     {
@@ -45,39 +46,280 @@ public class Movement : MonoBehaviour
     protected bool _canJump = true;
     private bool _disableInput = false;
 
+    private RaycastHit2D _slopeHit;
+    private RaycastHit2D _slopeHitFront;
+    private RaycastHit2D _slopeHitBack;
+    public bool IsGrounded = false;
+    public bool IsOnSlope = false;
+
+    private float _slopeSideAngle = 0f;
+    private float _slopeDownAngle = 0f;
+    private float _lastSlopAngle = 0f;
+    private bool _canWalkOnSlope = false;
+
+    private Vector2 _slopeNormalPerpendicular = Vector2.zero;
+
+    //private MovingPlatform _movingPlatform;
+    private RaycastHit2D _movingPlatformHit;
+
+    //anim
+    public bool FlipAnim = false;
+
     public Vector2 InputDirection
     {
         get { return _inputDirection; }
         set { _inputDirection = value; }
     }
 
-    // Start is called before the first frame update
-    void Start()
+    protected Vector2 _inputDirection;
+    protected Rigidbody2D _rigidbody2D;
+    protected Collider2D _collider2D;
+    protected Health _health;
+
+    protected GameObject damageSource;
+
+    protected virtual void Start()
     {
         //cache our components for later use
         _rigidbody2D = GetComponent<Rigidbody2D>();
         _collider2D = GetComponent<Collider2D>();
+        _health = GetComponent<Health>();
+
+        if (_health != null)
+        {
+            //_health.OnHit += Hit;
+            //_health.OnHitReset += ResetMove;
+        }
     }
 
-    // Update is called once per frame
-    void Update()
+    private void OnDisable()
+    {
+        if (_health != null)
+        {
+            //_health.OnHit -= Hit;
+            //_health.OnHitReset -= ResetMove;
+        }
+    }
+
+    
+
+    protected virtual void Hit(GameObject source)
+    {
+        float pushHorizontal = 0f;
+
+        if (source != null)
+            pushHorizontal = (source.transform.position.x < transform.position.x) ? JumpForce : -JumpForce;
+
+        damageSource = source;
+
+        _rigidbody2D.velocity = Vector2.zero;
+
+        _rigidbody2D.velocity = new Vector2(pushHorizontal * 0.5f, JumpForce);
+        _disableInput = true;
+
+        Physics2D.IgnoreCollision(damageSource.GetComponent<Collider2D>(), _collider2D, true);
+    }
+
+    
+
+    protected virtual void ResetMove()
+    {
+        if (damageSource != null)
+        {
+            Collider2D damageCollider = damageSource.GetComponent<Collider2D>();
+
+            if (damageCollider != null && damageSource != null)
+                Physics2D.IgnoreCollision(damageCollider, _collider2D, false);
+        }
+
+        _disableInput = false;
+    }
+
+    protected virtual void Update()
     {
         HandleInput();
     }
 
-    void FixedUpdate()
+    protected virtual void FixedUpdate()
     {
         CheckGround();
+        //CheckSlope();
 
         HandleMovement();
+        Flip();
     }
 
-    void HandleInput()
+    protected virtual void HandleInput()
     {
-        _inputDirection = new Vector2(x: Input.GetAxis("Horizontal"), y: Input.GetAxis("Vertical"));
+        //_inputDirection = new Vector2(x: Input.GetAxis("Horizontal"), y: Input.GetAxis("Vertical"));
     }
 
-    protected void BufferJump()
+    protected virtual void HandleMovement()
+    {
+        if (_disableInput)
+            return;
+
+        if (_rigidbody2D == null)
+            return;
+
+        Vector3 targetVelocity = Vector3.zero;
+
+        if (IsGrounded && !IsOnSlope && !IsJumping)
+        {
+            targetVelocity = new Vector2(_inputDirection.x * (Acceleration), 0f);
+            _rigidbody2D.velocity = Vector3.SmoothDamp(_rigidbody2D.velocity, targetVelocity, ref m_Velocity, m_MovementSmoothing);
+
+        }
+        else if (IsGrounded && IsOnSlope && _canWalkOnSlope && !IsJumping)
+        {
+            targetVelocity = new Vector2(-_inputDirection.x * (Acceleration) * _slopeNormalPerpendicular.x,
+                -_inputDirection.x * (Acceleration) * _slopeNormalPerpendicular.y);
+            _rigidbody2D.velocity = Vector3.SmoothDamp(_rigidbody2D.velocity, targetVelocity, ref m_Velocity, m_MovementSmoothing);
+
+        }
+        else if (!IsGrounded)
+        {
+            targetVelocity = new Vector2(_inputDirection.x * (Acceleration), _rigidbody2D.velocity.y);
+            _rigidbody2D.velocity = Vector3.SmoothDamp(_rigidbody2D.velocity, targetVelocity, ref m_Velocity, m_MovementSmoothing);
+        }
+
+        //transform.parent = _movingPlatform != null ? _movingPlatform.transform : null;
+
+        if (targetVelocity.x == 0)
+        {
+            _isRunning = false;
+        }
+        else
+        {
+            _isRunning = true;
+        }
+
+        ////Vector3 targetVelocity = Vector3.zero;
+
+        ////if (_isGrounded && _isJumping)
+
+        ////targetVelocity = new Vector2(x: _inputDirection.x * (Acceleration), y: 0f);
+
+        ////_rigidbody2D.velocity = targetVelocity;
+    }
+
+    protected virtual void CheckGround()
+    {
+        IsGrounded = Physics2D.OverlapCircle(GroundCheck.position, GroundCheckRadius, GroundLayerMask);
+
+        if (_rigidbody2D.velocity.y <= 0f)
+        {
+            _isJumping = false;
+            // CoyoteTime.StopCooldown();;
+            _isFalling = true;
+        }
+
+        if (IsGrounded && !IsJumping && _slopeDownAngle <= MaxSlopeAngle)
+        {
+            _canJump = true;
+            _isFalling = false;
+
+            if (CoyoteTime.CurrentProgress != Cooldown.Progress.Ready)
+                CoyoteTime.StopCooldown(); ;
+
+            if (BufferJump.CurrentProgress is Cooldown.Progress.Started or Cooldown.Progress.InProgress)
+            {
+                DoJump();
+            }
+
+            // try to check if we are in a moving platform
+            _movingPlatformHit = Physics2D.Raycast(GroundCheck.position, Vector2.down, 1f, GroundLayerMask);
+
+            if (_movingPlatformHit)
+            {
+                //MovingPlatform temp = _movingPlatformHit.collider.GetComponent<MovingPlatform>();
+
+                //if (temp != null)
+                //    _movingPlatform = temp;
+                //else
+                //{
+                //    _movingPlatform = null;
+                //}
+            }
+        }
+        if (!IsGrounded && !IsJumping && CoyoteTime.CurrentProgress == Cooldown.Progress.Ready)
+            CoyoteTime.StartCooldown();
+    }
+
+    protected void CheckSlope()
+    {
+        CheckSlopeHorizontal();
+        CheckSlopeVertical();
+    }
+
+    protected void CheckSlopeHorizontal()
+    {
+        _slopeHitFront = Physics2D.Raycast(GroundCheck.position, Vector2.right, 1f, GroundLayerMask);
+        _slopeHitBack = Physics2D.Raycast(GroundCheck.position, Vector2.left, 1f, GroundLayerMask);
+
+        if (_slopeHitFront)
+        {
+            IsOnSlope = true;
+            _slopeSideAngle = Vector2.Angle(Vector2.up, _slopeHitFront.normal);
+        }
+        else if (_slopeHitBack)
+        {
+            IsOnSlope = true;
+            _slopeSideAngle = Vector2.Angle(Vector2.up, _slopeHitBack.normal);
+        }
+        else
+        {
+            _slopeSideAngle = 0f;
+            IsOnSlope = false;
+        }
+
+    }
+
+    protected void CheckSlopeVertical()
+    {
+        _slopeHit =  Physics2D.Raycast(GroundCheck.position, Vector2.down, 1f, GroundLayerMask);
+
+        if (_slopeHit)
+        {
+            _slopeNormalPerpendicular = Vector2.Perpendicular(_slopeHit.normal).normalized;
+
+            _slopeDownAngle = Vector2.Angle(_slopeHit.normal, Vector2.up);
+
+            if (_slopeDownAngle != _lastSlopAngle)
+            {
+                IsOnSlope = true;
+            }
+
+            _lastSlopAngle = _slopeDownAngle;
+            
+            Debug.DrawRay(_slopeHit.point, _slopeNormalPerpendicular, Color.blue);
+            Debug.DrawRay(_slopeHit.point, _slopeHit.normal, Color.green);
+        }
+
+        if (_slopeDownAngle > MaxSlopeAngle || _slopeSideAngle > MaxSlopeAngle)
+        {
+            _canWalkOnSlope = false;
+        }
+        else
+        {
+            _canWalkOnSlope = true;
+        }
+
+        if (IsOnSlope && _canWalkOnSlope && _inputDirection.x == 0)
+        {
+            _rigidbody2D.sharedMaterial = FullFriction;
+        }
+        //else if (_movingPlatform && _inputDirection.x == 0)
+        //{
+        //    _rigidbody2D.sharedMaterial = FullFriction;
+        //}
+        else
+        {
+            _rigidbody2D.sharedMaterial = Default;
+        }
+    }
+
+    protected virtual void TryBufferJump()
     {
         BufferJump.StartCooldown();
     }
@@ -85,6 +327,9 @@ public class Movement : MonoBehaviour
     protected virtual void DoJump()
     {
         //cooldown check is needed
+
+        if (!_disableInput)
+            return;
 
         if (!_canJump)
         {
@@ -100,32 +345,30 @@ public class Movement : MonoBehaviour
 
         _canJump = false;
         _isJumping = true;
+        _isFalling = false;
 
         _rigidbody2D.velocity = new Vector2(_rigidbody2D.velocity.x, y: JumpForce);
-
-        Debug.Log(message: "jumping");
-
         CoyoteTime.StopCooldown();
-    }
-
-    void HandleMovement()
-    {
-        Vector3 targetVelocity = Vector3.zero;
-
-        if (_isGrounded && _isJumping)
-
-        targetVelocity = new Vector2(x: _inputDirection.x * (Acceleration), y: 0f);
-
-        _rigidbody2D.velocity = targetVelocity;
-    }
-
-    void CheckGround()
-    {
-        _isGrounded = Physics2D.OverlapCircle(GroundCheck.position, GroundCheckRadius, GroundLayerMask);
+        Debug.Log(message: "jumping");
     }
 
     protected virtual void Flip()
     {
-        //if (_inputDirection.x) ;
+        if (_inputDirection.x == 0)
+            return;
+
+        if (_inputDirection.x > 0)
+        {
+            FlipAnim = false;
+        }
+        else if (_inputDirection.x < 0)
+        {
+            FlipAnim = true;
+        }
+    }
+
+    public void StompJump()
+    {
+        _rigidbody2D.velocity = new Vector2(_rigidbody2D.velocity.x, 100f);
     }
 }

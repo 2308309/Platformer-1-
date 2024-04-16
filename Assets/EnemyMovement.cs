@@ -2,15 +2,15 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-public class EnemyMovement : MonoBehaviour
+public class EnemyMovement : Movement
 {
     public Transform Target;
 
     // Start is called before the first frame update
-    void Start()
-    {
+    //void Start()
+    //{
         
-    }
+    //}
 
     // Update is called once per frame
     protected override void HandleInput()
@@ -21,9 +21,6 @@ public class EnemyMovement : MonoBehaviour
         Vector2 targetDirection = Target.position - transform.position;
         targetDirection = targetDirection.normalized;
 
-        _inputDirection = targetDirection;
-
-        
-
+        //_inputDirection = targetDirection;
     }
 }

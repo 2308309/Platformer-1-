@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using UnityEngine;
 
 [Serializable]
-public class Cooldown : MonoBehaviour
+public class Cooldown
 {
     public enum Progress
     {
@@ -15,6 +15,8 @@ public class Cooldown : MonoBehaviour
     }
     
     public Progress CurrentProgress = Progress.Ready;
+
+    public float Duration = 1.0f;
     public float TimeLeft
     {
         get { return _currentDuration; }
@@ -24,25 +26,53 @@ public class Cooldown : MonoBehaviour
         get { return _isOnCooldown; }
     }
 
-    public float Duration = 1.0f;
-
     private float _currentDuration = 0f;
+
     private bool _isOnCooldown = false;
 
     private Coroutine _coroutine;
 
     public void StartCooldown()
     {
-        if (CurrentProgress is Progress.Started or Progress.Inprogress)
+        if (CurrentProgress is Progress.Started or Progress.InProgress)
             return;
 
         _coroutine = CoroutineHost.Instance.StartCoroutine(DoCooldown());
     }
 
+    public void StopCooldown()
+    {
+        if (_coroutine != null)
+            CoroutineHost.Instance.StopCoroutine(_coroutine);
+
+        _currentDuration = 0f;
+        _isOnCooldown = false;
+        CurrentProgress = Progress.Ready;
+    }
+
+    IEnumerator DoCooldown()
+    {
+        CurrentProgress = Progress.Started;
+        _currentDuration = Duration;
+        _isOnCooldown = true;
+
+        while (_currentDuration > 0)
+        {
+            _currentDuration -= Time.deltaTime;
+            CurrentProgress = Progress.InProgress;
+
+            yield return null;
+        }
+
+        _currentDuration = 0f;
+        _isOnCooldown= false;
+
+        CurrentProgress= Progress.Finished;
+    }
 
     // Update is called once per frame
-    void Update()
-    {
+    //void Update()
+    //{
         
-    }
+    //}
 }
